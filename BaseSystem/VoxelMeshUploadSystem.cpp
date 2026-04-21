@@ -276,6 +276,29 @@ namespace VoxelMeshUploadSystemLogic {
             return encoded - 1;
         }
 
+        constexpr uint8_t kWaterWaveClassUnknown = 0u;
+        constexpr uint8_t kWaterWaveClassLake = 2u;
+        constexpr uint8_t kWaterWaveClassOcean = 4u;
+        constexpr uint8_t kWaterFoliageMarkerSandDollarZ = 5u;
+
+        uint8_t waterWaveClassFromPackedColor(uint32_t packedColor) {
+            const uint8_t encoded = static_cast<uint8_t>((packedColor >> 24) & 0xffu);
+            const uint8_t marker = static_cast<uint8_t>(encoded & 0x0fu);
+            const uint8_t waveClass = static_cast<uint8_t>((encoded >> 4u) & 0x0fu);
+            if (marker <= kWaterFoliageMarkerSandDollarZ && waveClass <= kWaterWaveClassOcean) {
+                return waveClass;
+            }
+            return kWaterWaveClassUnknown;
+        }
+
+        float resolvedWaterWaveClassFromPackedColor(uint32_t packedColor) {
+            uint8_t waveClass = waterWaveClassFromPackedColor(packedColor);
+            if (waveClass == kWaterWaveClassUnknown) {
+                waveClass = kWaterWaveClassLake;
+            }
+            return static_cast<float>(waveClass);
+        }
+
         int decodeSurfaceStonePileCount(uint32_t packedColor) {
             const int encoded = static_cast<int>((packedColor >> 24) & 0xffu);
             if (encoded <= 0) return kSurfaceStonePileMin;
@@ -300,6 +323,17 @@ namespace VoxelMeshUploadSystemLogic {
                 {7u, 4, VertexAttribType::Float, false, static_cast<unsigned int>(sizeof(FaceInstanceRenderData)), offsetof(FaceInstanceRenderData, ao), 1u},
                 {8u, 2, VertexAttribType::Float, false, static_cast<unsigned int>(sizeof(FaceInstanceRenderData)), offsetof(FaceInstanceRenderData, scale), 1u},
                 {9u, 2, VertexAttribType::Float, false, static_cast<unsigned int>(sizeof(FaceInstanceRenderData)), offsetof(FaceInstanceRenderData, uvScale), 1u},
+            };
+            return kLayout;
+        }
+
+        const std::vector<VertexAttribLayout>& WaterFaceInstanceLayout() {
+            static const std::vector<VertexAttribLayout> kLayout = {
+                {3u, 3, VertexAttribType::Float, false, static_cast<unsigned int>(sizeof(WaterFaceInstanceRenderData)), offsetof(WaterFaceInstanceRenderData, position), 1u},
+                {4u, 1, VertexAttribType::Float, false, static_cast<unsigned int>(sizeof(WaterFaceInstanceRenderData)), offsetof(WaterFaceInstanceRenderData, waveClass), 1u},
+                {5u, 4, VertexAttribType::Float, false, static_cast<unsigned int>(sizeof(WaterFaceInstanceRenderData)), offsetof(WaterFaceInstanceRenderData, metrics), 1u},
+                {6u, 2, VertexAttribType::Float, false, static_cast<unsigned int>(sizeof(WaterFaceInstanceRenderData)), offsetof(WaterFaceInstanceRenderData, scale), 1u},
+                {7u, 2, VertexAttribType::Float, false, static_cast<unsigned int>(sizeof(WaterFaceInstanceRenderData)), offsetof(WaterFaceInstanceRenderData, uvScale), 1u},
             };
             return kLayout;
         }
@@ -472,6 +506,29 @@ namespace VoxelMeshUploadSystemLogic {
                 return static_cast<uint8_t>(0);
             }
             return snapshot.paddedCombinedLight[static_cast<size_t>(idx)];
+        }
+
+        bool snapshotIsWater(const VoxelMeshingSnapshot& snapshot,
+                             const std::vector<VoxelMeshingPrototypeTraits>& prototypeTraits,
+                             const glm::ivec3& localCell) {
+            const uint32_t blockId = snapshotBlockAt(snapshot, localCell.x, localCell.y, localCell.z);
+            if (blockId == 0 || blockId >= prototypeTraits.size()) return false;
+            return prototypeTraits[blockId].water;
+        }
+
+        float countContiguousWater(const VoxelMeshingSnapshot& snapshot,
+                                   const std::vector<VoxelMeshingPrototypeTraits>& prototypeTraits,
+                                   const glm::ivec3& startLocal,
+                                   const glm::ivec3& step,
+                                   int maxSamples) {
+            glm::ivec3 cursor = startLocal;
+            int count = 0;
+            for (int i = 0; i < maxSamples; ++i) {
+                if (!snapshotIsWater(snapshot, prototypeTraits, cursor)) break;
+                ++count;
+                cursor += step;
+            }
+            return static_cast<float>(count);
         }
 
         float lightFactorForLevel(const VoxelMeshingSnapshot& snapshot, uint8_t level) {
@@ -935,6 +992,46 @@ namespace VoxelMeshUploadSystemLogic {
                     );
                     buffers.faceBuffers.alphaCounts[static_cast<size_t>(faceType)] = static_cast<int>(alpha.size());
                 }
+
+                const auto& waterSurface = preparedMesh.waterSurfaceFaces[static_cast<size_t>(faceType)];
+                if (!waterSurface.empty()) {
+                    renderBackend.ensureVertexArray(buffers.waterBuffers.surfaceVaos[static_cast<size_t>(faceType)]);
+                    renderBackend.ensureArrayBuffer(buffers.waterBuffers.surfaceVBOs[static_cast<size_t>(faceType)]);
+                    renderBackend.uploadArrayBufferData(
+                        buffers.waterBuffers.surfaceVBOs[static_cast<size_t>(faceType)],
+                        waterSurface.data(),
+                        waterSurface.size() * sizeof(WaterFaceInstanceRenderData),
+                        false
+                    );
+                    renderBackend.configureVertexArray(
+                        buffers.waterBuffers.surfaceVaos[static_cast<size_t>(faceType)],
+                        renderer.faceVBO,
+                        FaceVertexLayout(),
+                        buffers.waterBuffers.surfaceVBOs[static_cast<size_t>(faceType)],
+                        WaterFaceInstanceLayout()
+                    );
+                    buffers.waterBuffers.surfaceCounts[static_cast<size_t>(faceType)] = static_cast<int>(waterSurface.size());
+                }
+
+                const auto& waterBody = preparedMesh.waterBodyFaces[static_cast<size_t>(faceType)];
+                if (!waterBody.empty()) {
+                    renderBackend.ensureVertexArray(buffers.waterBuffers.bodyVaos[static_cast<size_t>(faceType)]);
+                    renderBackend.ensureArrayBuffer(buffers.waterBuffers.bodyVBOs[static_cast<size_t>(faceType)]);
+                    renderBackend.uploadArrayBufferData(
+                        buffers.waterBuffers.bodyVBOs[static_cast<size_t>(faceType)],
+                        waterBody.data(),
+                        waterBody.size() * sizeof(WaterFaceInstanceRenderData),
+                        false
+                    );
+                    renderBackend.configureVertexArray(
+                        buffers.waterBuffers.bodyVaos[static_cast<size_t>(faceType)],
+                        renderer.faceVBO,
+                        FaceVertexLayout(),
+                        buffers.waterBuffers.bodyVBOs[static_cast<size_t>(faceType)],
+                        WaterFaceInstanceLayout()
+                    );
+                    buffers.waterBuffers.bodyCounts[static_cast<size_t>(faceType)] = static_cast<int>(waterBody.size());
+                }
             }
 
             renderBackend.unbindVertexArray();
@@ -1089,8 +1186,10 @@ namespace VoxelMeshUploadSystemLogic {
                     for (int faceType = 0; faceType < 6; ++faceType) {
                         const glm::ivec3 neighborLocal = glm::ivec3(x, y, z) + kFaceNormals[static_cast<size_t>(faceType)];
                         const uint32_t neighborId = snapshotBlockAt(snapshot, neighborLocal.x, neighborLocal.y, neighborLocal.z);
-                        if (traitsFor(neighborId).opaqueBlock) continue;
-                        if (isLeaf && traitsFor(neighborId).leaf) continue;
+                        const VoxelMeshingPrototypeTraits& neighborTraits = traitsFor(neighborId);
+                        if (neighborTraits.opaqueBlock) continue;
+                        if (traits.water && neighborTraits.water) continue;
+                        if (isLeaf && neighborTraits.leaf) continue;
 
                         FaceInstanceRenderData face{};
                         glm::vec3 normal = glm::vec3(kFaceNormals[static_cast<size_t>(faceType)]);
@@ -1111,12 +1210,10 @@ namespace VoxelMeshUploadSystemLogic {
                         face.alpha = isLeaf ? -1.0f : 1.0f;
                         if (isGrassCover) {
                             face.alpha = -14.0f;
-                        } else if (traits.water) {
-                            face.alpha = 0.08f;
                         } else if (traits.transparentWave) {
                             face.alpha = 0.06f;
                         }
-                        if (traits.water || traits.transparentWave) {
+                        if (traits.transparentWave) {
                             face.ao = glm::vec4(1.0f);
                         } else {
                             face.ao = computeFaceCornerLighting(
@@ -1150,6 +1247,40 @@ namespace VoxelMeshUploadSystemLogic {
                             target.scale = faceScaleFor(extents);
                             target.uvScale = target.scale;
                         };
+
+                        if (traits.water) {
+                            WaterFaceInstanceRenderData waterFace{};
+                            const bool waterSurfaceFace = (faceType == 2) && !neighborTraits.water;
+                            const glm::ivec3 localCell(x, y, z);
+                            waterFace.position = glm::vec3(worldCell) + normal * 0.5f;
+                            waterFace.waveClass = resolvedWaterWaveClassFromPackedColor(packedColorRaw);
+                            waterFace.metrics = glm::vec4(
+                                countContiguousWater(
+                                    snapshot,
+                                    prototypeTraits,
+                                    localCell,
+                                    -kFaceNormals[static_cast<size_t>(faceType)],
+                                    snapshot.sectionSize + 2
+                                ),
+                                countContiguousWater(
+                                    snapshot,
+                                    prototypeTraits,
+                                    localCell,
+                                    glm::ivec3(0, -1, 0),
+                                    snapshot.sectionSize + 2
+                                ),
+                                0.0f,
+                                0.0f
+                            );
+                            waterFace.scale = glm::vec2(1.0f);
+                            waterFace.uvScale = glm::vec2(1.0f);
+                            if (waterSurfaceFace) {
+                                outMesh.waterSurfaceFaces[static_cast<size_t>(faceType)].push_back(waterFace);
+                            } else {
+                                outMesh.waterBodyFaces[static_cast<size_t>(faceType)].push_back(waterFace);
+                            }
+                            continue;
+                        }
 
                         if (isSurfaceStonePebble) {
                             const int pileCount = decodeSurfaceStonePileCount(packedColorRaw);

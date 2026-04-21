@@ -53,11 +53,20 @@ namespace WorldRenderSystemLogic {
     void RenderWorld(BaseSystem& baseSystem, std::vector<Entity>& prototypes, float dt, PlatformWindowHandle win) {
         if (!baseSystem.renderer || !baseSystem.world || !baseSystem.player || !baseSystem.level || !baseSystem.renderBackend) return;
         IRenderBackend& renderBackend = *baseSystem.renderBackend;
-        renderBackend.clearDefaultFramebuffer(0.0f, 0.0f, 0.0f, 1.0f, true);
         PlayerContext& player = *baseSystem.player;
         WorldContext& world = *baseSystem.world;
         RendererContext& renderer = *baseSystem.renderer;
         LevelContext& level = *baseSystem.level;
+        const bool renderToWaterSceneTarget =
+            renderer.waterCompositeShader
+            && 
+            renderer.waterSceneFBO != 0
+            && renderer.waterSceneTex != 0
+            && renderer.waterSceneWidth > 0
+            && renderer.waterSceneHeight > 0;
+        if (!renderToWaterSceneTarget) {
+            renderBackend.clearDefaultFramebuffer(0.0f, 0.0f, 0.0f, 1.0f, true);
+        }
 
         float time = static_cast<float>(PlatformInput::GetTimeSeconds());
         const bool mapViewActive = false;
@@ -302,6 +311,9 @@ namespace WorldRenderSystemLogic {
                 if (proto.name == "Face_NegY") { faceInstances[3].push_back({instance.position, instance.color, -1, 1.0f, glm::vec4(1.0f), glm::vec2(1.0f), glm::vec2(1.0f)}); continue; }
                 if (proto.name == "Face_PosZ") { faceInstances[4].push_back({instance.position, instance.color, -1, 1.0f, glm::vec4(1.0f), glm::vec2(1.0f), glm::vec2(1.0f)}); continue; }
                 if (proto.name == "Face_NegZ") { faceInstances[5].push_back({instance.position, instance.color, -1, 1.0f, glm::vec4(1.0f), glm::vec2(1.0f), glm::vec2(1.0f)}); continue; }
+                if (MiniModelSystemLogic::AppendRenderableFacesForInstance(baseSystem, proto, instance, faceInstances)) {
+                    continue;
+                }
                 if (proto.name == "Computer" || proto.name == "SecurityCamera") {
                     static const std::array<glm::vec3, 6> kComputerFaceNormals = {
                         glm::vec3(1.0f, 0.0f, 0.0f),
@@ -340,6 +352,7 @@ namespace WorldRenderSystemLogic {
                 }
             }
         }
+        MiniModelSystemLogic::AppendWorkbenchFaces(baseSystem, faceInstances);
 
         if (RenderInitSystemLogic::getRegistryBool(baseSystem, "DebugVoxelRender", false) && baseSystem.voxelWorld) {
             size_t sectionCount = baseSystem.voxelWorld->sections.size();
@@ -352,6 +365,17 @@ namespace WorldRenderSystemLogic {
         glm::vec3 skyTop(0.52f, 0.66f, 0.95f);
         glm::vec3 skyBottom(0.03f, 0.06f, 0.18f);
         SkyboxSystemLogic::getCurrentSkyColors(dayFraction, world.skyKeys, skyTop, skyBottom);
+        if (renderToWaterSceneTarget) {
+            renderBackend.beginOffscreenColorPass(
+                renderer.waterSceneFBO,
+                renderer.waterSceneWidth,
+                renderer.waterSceneHeight,
+                skyBottom.r,
+                skyBottom.g,
+                skyBottom.b,
+                1.0f
+            );
+        }
         glm::vec3 lightDir;
         SkyboxSystemLogic::RenderSkyAndCelestials(baseSystem, prototypes, starPositions, time, dayFraction, view, projection, playerPos, lightDir);
         if (dt > 0.0f) {
@@ -1097,6 +1121,9 @@ namespace WorldRenderSystemLogic {
         heldItemFrame.waterCascadeBrightnessSpeed = waterCascadeBrightnessSpeed;
         heldItemFrame.waterCascadeBrightnessScale = waterCascadeBrightnessScale;
         RenderHeldItemPass(baseSystem, prototypes, heldItemFrame, bindFaceTextureUniforms);
+        if (renderToWaterSceneTarget) {
+            renderBackend.endOffscreenColorPass();
+        }
 
     }
 }

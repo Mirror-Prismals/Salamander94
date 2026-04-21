@@ -3530,6 +3530,28 @@ void WebGPUBackend::beginOffscreenColorPass(RenderHandle framebuffer, int width,
 #endif
 }
 
+void WebGPUBackend::resumeOffscreenColorPass(RenderHandle framebuffer, int width, int height) {
+#if SALAMANDER_WEBGPU_NATIVE
+    if (!state || !state->device || !framebuffer || width <= 0 || height <= 0) {
+        return;
+    }
+
+    const auto fbIt = state->framebuffers.find(framebuffer);
+    if (fbIt == state->framebuffers.end()) return;
+    const auto texIt = state->textures.find(fbIt->second.textureHandle);
+    if (texIt == state->textures.end() || !texIt->second.defaultView || !fbIt->second.depthTextureView) return;
+
+    BackendState::OffscreenScope scope{};
+    scope.framebuffer = framebuffer;
+    scope.pendingClear = false;
+    state->offscreenScopes.push_back(scope);
+#else
+    (void)framebuffer;
+    (void)width;
+    (void)height;
+#endif
+}
+
 void WebGPUBackend::endOffscreenColorPass() {
 #if SALAMANDER_WEBGPU_NATIVE
     if (!state || state->offscreenScopes.empty()) {

@@ -554,7 +554,7 @@
   "CaveCeilingStoneGenerationEnabled": true,
   "FoliageWindAnimationEnabled": true,
   "BlockSelectionVisualEnabled": false,
-  "CrosshairEnabled": false,
+  "CrosshairEnabled": true,
   "FPSMeterEnabled": true,
   "CoordinatesMeterEnabled": true,
   "TodaysFishLocationMeterEnabled": false,

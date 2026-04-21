@@ -36,6 +36,7 @@ public:
     bool createColorRenderTarget(int width, int height, RenderHandle& outFramebuffer, RenderHandle& outTexture) override;
     void destroyColorRenderTarget(RenderHandle& framebuffer, RenderHandle& texture) override;
     void beginOffscreenColorPass(RenderHandle framebuffer, int width, int height, float r, float g, float b, float a) override;
+    void resumeOffscreenColorPass(RenderHandle framebuffer, int width, int height) override;
     void endOffscreenColorPass() override;
     bool readDefaultFramebufferRgb(PlatformWindowHandle window, std::vector<unsigned char>& outPixels, int& width, int& height) const override;
     bool uploadRgbTexture2D(RenderHandle& ioTexture, int width, int height, const std::vector<unsigned char>& pixels) override;

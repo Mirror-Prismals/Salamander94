@@ -47,7 +47,8 @@ enum class BuildModeType : int {
     Destroy = 3,
     Fishing = 4,
     Bouldering = 5,
-    PickupLeft = 6
+    PickupLeft = 6,
+    MiniModel = 7
 };
 enum class BlockChargeAction : int { None = 0, Pickup = 1, Destroy = 2, Fishing = 3, BoulderPrimary = 4, BoulderSecondary = 5, Throw = 6 };
 struct InstanceData { glm::vec3 position; glm::vec3 color; };
@@ -82,6 +83,13 @@ private:
 struct SkyColorKey { float time; glm::vec3 top; glm::vec3 bottom; };
 struct FaceTextureSet { int all = -1; int top = -1; int bottom = -1; int side = -1; };
 struct FaceInstanceRenderData { glm::vec3 position; glm::vec3 color; int tileIndex = -1; float alpha = 1.0f; glm::vec4 ao = glm::vec4(1.0f); glm::vec2 scale = glm::vec2(1.0f); glm::vec2 uvScale = glm::vec2(1.0f); };
+struct WaterFaceInstanceRenderData {
+    glm::vec3 position = glm::vec3(0.0f);
+    float waveClass = 2.0f;
+    glm::vec4 metrics = glm::vec4(1.0f, 1.0f, 0.0f, 0.0f);
+    glm::vec2 scale = glm::vec2(1.0f);
+    glm::vec2 uvScale = glm::vec2(1.0f);
+};
 struct VoxelMeshingPrototypeTraits {
     bool renderableBlock = false;
     bool opaqueBlock = false;
@@ -123,6 +131,8 @@ struct VoxelMeshingSnapshot {
 struct PreparedVoxelSectionMesh {
     std::array<std::vector<FaceInstanceRenderData>, 6> opaqueFaces;
     std::array<std::vector<FaceInstanceRenderData>, 6> alphaFaces;
+    std::array<std::vector<WaterFaceInstanceRenderData>, 6> waterSurfaceFaces;
+    std::array<std::vector<WaterFaceInstanceRenderData>, 6> waterBodyFaces;
     uint64_t dirtyTicket = 0;
     bool usesTexturedFaceBuffers = true;
     bool builtWithFaceCulling = false;
@@ -270,11 +280,20 @@ struct VoxelFaceRenderBuffers {
     std::array<RenderHandle, 6> alphaVBOs{};
     std::array<int, 6> alphaCounts{};
 };
+struct VoxelWaterRenderBuffers {
+    std::array<RenderHandle, 6> surfaceVaos{};
+    std::array<RenderHandle, 6> surfaceVBOs{};
+    std::array<int, 6> surfaceCounts{};
+    std::array<RenderHandle, 6> bodyVaos{};
+    std::array<RenderHandle, 6> bodyVBOs{};
+    std::array<int, 6> bodyCounts{};
+};
 struct ChunkRenderBuffers {
     std::array<RenderHandle, static_cast<int>(RenderBehavior::COUNT)> vaos{};
     std::array<RenderHandle, static_cast<int>(RenderBehavior::COUNT)> instanceVBOs{};
     std::array<int, static_cast<int>(RenderBehavior::COUNT)> counts{};
     VoxelFaceRenderBuffers faceBuffers{};
+    VoxelWaterRenderBuffers waterBuffers{};
     bool usesTexturedFaceBuffers = false;
     bool builtWithFaceCulling = false;
 };
@@ -402,6 +421,8 @@ struct MiniVoxelParticle {
 struct RendererContext {
     std::unique_ptr<Shader> blockShader, skyboxShader, sunMoonShader, starShader, selectionShader, hudShader, crosshairShader, colorEmotionShader;
     std::unique_ptr<Shader> faceShader;
+    std::unique_ptr<Shader> waterShader;
+    std::unique_ptr<Shader> waterCompositeShader;
     std::unique_ptr<Shader> fontShader;
     RenderHandle cubeVBO;
     std::vector<RenderHandle> behaviorVAOs;
@@ -474,6 +495,12 @@ struct RendererContext {
     int waterReflectionWidth = 0;
     int waterReflectionHeight = 0;
     int waterReflectionDownsample = 2;
+    RenderHandle waterSceneFBO = 0;
+    RenderHandle waterSceneTex = 0;
+    RenderHandle waterSceneCopyFBO = 0;
+    RenderHandle waterSceneCopyTex = 0;
+    int waterSceneWidth = 0;
+    int waterSceneHeight = 0;
     std::unique_ptr<Shader> godrayRadialShader;
     std::unique_ptr<Shader> godrayCompositeShader;
     int godrayWidth = 0;
@@ -792,6 +819,53 @@ struct ColorEmotionContext {
     int modeCycleFlashLastPreviewAction = 0;
     glm::vec3 proneToggleFlashColor = glm::vec3(1.0f, 1.0f, 0.0f);
     glm::vec3 color = glm::vec3(0.0f);
+};
+struct MiniModelWorkbenchDef {
+    std::string id;
+    std::string worldName;
+    glm::ivec3 minCorner = glm::ivec3(0);
+    glm::ivec3 sizeBlocks = glm::ivec3(1);
+    std::string outputPath;
+    int worldIndex = -1;
+};
+struct MiniModelAssetRecord {
+    std::string id;
+    std::string sourcePath;
+    glm::ivec3 sizeBlocks = glm::ivec3(1);
+    glm::ivec3 gridSize = glm::ivec3(24);
+    int gridPerBlock = 24;
+    bool loaded = false;
+    bool loadFailed = false;
+    std::array<std::vector<FaceInstanceRenderData>, 6> localFaces;
+};
+struct MiniModelWorkbenchState {
+    MiniModelWorkbenchDef def;
+    bool initialized = false;
+    bool dirty = true;
+    bool facesDirty = true;
+    std::vector<uint32_t> cells;
+    std::array<std::vector<FaceInstanceRenderData>, 6> localFaces;
+};
+struct MiniModelPreviewState {
+    bool active = false;
+    bool canPlace = false;
+    int workbenchIndex = -1;
+    glm::ivec3 cell = glm::ivec3(0);
+    glm::vec3 color = glm::vec3(1.0f);
+    std::array<std::vector<FaceInstanceRenderData>, 6> faces;
+};
+struct MiniModelContext {
+    bool configLoaded = false;
+    LevelContext* level = nullptr;
+    std::vector<MiniModelWorkbenchState> workbenches;
+    std::unordered_map<std::string, MiniModelAssetRecord> assets;
+    int activeWorkbenchIndex = -1;
+    glm::vec3 activeColor = glm::vec3(1.0f);
+    MiniModelPreviewState preview;
+    bool atlasPixelsLoaded = false;
+    std::string atlasPixelsPath;
+    glm::ivec2 atlasPixelsSize = glm::ivec2(0);
+    std::vector<unsigned char> atlasPixels;
 };
 struct FishingShadowState {
     glm::vec3 position = glm::vec3(0.0f);
@@ -1588,6 +1662,7 @@ struct BaseSystem {
     std::unique_ptr<RayTracedAudioContext> rayTracedAudio;
     std::unique_ptr<HUDContext> hud;
     std::unique_ptr<ColorEmotionContext> colorEmotion;
+    std::unique_ptr<MiniModelContext> miniModel;
     std::unique_ptr<FishingContext> fishing;
     std::unique_ptr<GemContext> gems;
     std::unique_ptr<UIContext> ui;
@@ -1781,6 +1856,15 @@ namespace MirrorSystemLogic { void UpdateMirrors(BaseSystem&, std::vector<Entity
 namespace BootSequenceSystemLogic { void UpdateBootSequence(BaseSystem&, std::vector<Entity>&, float, PlatformWindowHandle); }
 namespace ComputerCursorSystemLogic { void UpdateComputerCursor(BaseSystem&, std::vector<Entity>&, float, PlatformWindowHandle); }
 namespace ButtonSystemLogic { void UpdateButtons(BaseSystem&, std::vector<Entity>&, float, PlatformWindowHandle); bool GetButtonToggled(int instanceID); void SetButtonToggled(int instanceID, bool toggled); }
+namespace MiniModelSystemLogic {
+    void UpdateMiniModels(BaseSystem&, std::vector<Entity>&, float, PlatformWindowHandle);
+    bool AppendRenderableFacesForInstance(const BaseSystem&,
+                                          const Entity&,
+                                          const EntityInstance&,
+                                          std::array<std::vector<FaceInstanceRenderData>, 6>&);
+    void AppendWorkbenchFaces(const BaseSystem&,
+                              std::array<std::vector<FaceInstanceRenderData>, 6>&);
+}
 namespace DawSfxSystemLogic {
     void QueueButtonClick(BaseSystem&);
     void QueueOpen(BaseSystem&);

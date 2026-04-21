@@ -34,6 +34,17 @@ namespace RenderInitSystemLogic {
         }
     }
 
+    void DestroyVoxelWaterRenderBuffers(VoxelWaterRenderBuffers& buffers, IRenderBackend& renderBackend) {
+        for (size_t i = 0; i < buffers.surfaceVaos.size(); ++i) {
+            renderBackend.destroyVertexArray(buffers.surfaceVaos[i]);
+            renderBackend.destroyArrayBuffer(buffers.surfaceVBOs[i]);
+            buffers.surfaceCounts[i] = 0;
+            renderBackend.destroyVertexArray(buffers.bodyVaos[i]);
+            renderBackend.destroyArrayBuffer(buffers.bodyVBOs[i]);
+            buffers.bodyCounts[i] = 0;
+        }
+    }
+
     int FaceTileIndexFor(const WorldContext* worldCtx, const Entity& proto, int faceType) {
         if (!proto.useTexture) return -1;
         int legacyExternalTile = -1;
@@ -189,6 +200,7 @@ namespace RenderInitSystemLogic {
             renderBackend.destroyArrayBuffer(vbo);
         }
         DestroyVoxelFaceRenderBuffers(buffers.faceBuffers, renderBackend);
+        DestroyVoxelWaterRenderBuffers(buffers.waterBuffers, renderBackend);
         buffers.vaos.fill(0);
         buffers.instanceVBOs.fill(0);
         buffers.counts.fill(0);
@@ -347,6 +359,11 @@ namespace RenderInitSystemLogic {
 
         ensureShader(renderer.blockShader, "BLOCK_VERTEX_SHADER", "BLOCK_FRAGMENT_SHADER", "blockShader");
         ensureShader(renderer.faceShader, "FACE_VERTEX_SHADER", "FACE_FRAGMENT_SHADER", "faceShader");
+        ensureShader(renderer.waterShader, "WATER_VERTEX_SHADER", "WATER_FRAGMENT_SHADER", "waterShader");
+        ensureShader(renderer.waterCompositeShader,
+                     "WATER_COMPOSITE_VERTEX_SHADER",
+                     "WATER_COMPOSITE_FRAGMENT_SHADER",
+                     "waterCompositeShader");
         ensureShader(renderer.skyboxShader, "SKYBOX_VERTEX_SHADER", "SKYBOX_FRAGMENT_SHADER", "skyboxShader");
         ensureShader(renderer.sunMoonShader, "SUNMOON_VERTEX_SHADER", "SUNMOON_FRAGMENT_SHADER", "sunMoonShader");
         ensureShader(renderer.starShader, "STAR_VERTEX_SHADER", "STAR_FRAGMENT_SHADER", "starShader");
@@ -498,6 +515,25 @@ namespace RenderInitSystemLogic {
             renderer.waterReflectionWidth = 0;
             renderer.waterReflectionHeight = 0;
         }
+
+        renderer.waterSceneWidth = baseSystem.app
+            ? std::max(1, static_cast<int>(baseSystem.app->windowWidth))
+            : 1920;
+        renderer.waterSceneHeight = baseSystem.app
+            ? std::max(1, static_cast<int>(baseSystem.app->windowHeight))
+            : 1080;
+        setupFBO(
+            renderer.waterSceneFBO,
+            renderer.waterSceneTex,
+            renderer.waterSceneWidth,
+            renderer.waterSceneHeight
+        );
+        setupFBO(
+            renderer.waterSceneCopyFBO,
+            renderer.waterSceneCopyTex,
+            renderer.waterSceneWidth,
+            renderer.waterSceneHeight
+        );
 
         ensureShader(renderer.selectionShader, "SELECTION_VERTEX_SHADER", "SELECTION_FRAGMENT_SHADER", "selectionShader");
         std::vector<float> selectionVertices;
@@ -689,8 +725,12 @@ namespace RenderInitSystemLogic {
         renderBackend.destroyColorRenderTarget(renderer.godrayOcclusionFBO, renderer.godrayOcclusionTex);
         renderBackend.destroyColorRenderTarget(renderer.godrayBlurFBO, renderer.godrayBlurTex);
         renderBackend.destroyColorRenderTarget(renderer.waterReflectionFBO, renderer.waterReflectionTex);
+        renderBackend.destroyColorRenderTarget(renderer.waterSceneFBO, renderer.waterSceneTex);
+        renderBackend.destroyColorRenderTarget(renderer.waterSceneCopyFBO, renderer.waterSceneCopyTex);
         renderer.waterReflectionWidth = 0;
         renderer.waterReflectionHeight = 0;
+        renderer.waterSceneWidth = 0;
+        renderer.waterSceneHeight = 0;
 
         renderer.blockShader.reset();
         renderer.skyboxShader.reset();
@@ -701,6 +741,8 @@ namespace RenderInitSystemLogic {
         renderer.crosshairShader.reset();
         renderer.colorEmotionShader.reset();
         renderer.faceShader.reset();
+        renderer.waterShader.reset();
+        renderer.waterCompositeShader.reset();
         renderer.fontShader.reset();
         renderer.uiShader.reset();
         renderer.uiColorShader.reset();

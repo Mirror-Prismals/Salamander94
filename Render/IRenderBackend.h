@@ -73,6 +73,7 @@ public:
     virtual bool createColorRenderTarget(int width, int height, RenderHandle& outFramebuffer, RenderHandle& outTexture) = 0;
     virtual void destroyColorRenderTarget(RenderHandle& framebuffer, RenderHandle& texture) = 0;
     virtual void beginOffscreenColorPass(RenderHandle framebuffer, int width, int height, float r, float g, float b, float a) = 0;
+    virtual void resumeOffscreenColorPass(RenderHandle framebuffer, int width, int height) = 0;
     virtual void endOffscreenColorPass() = 0;
     virtual bool readDefaultFramebufferRgb(PlatformWindowHandle window, std::vector<unsigned char>& outPixels, int& width, int& height) const = 0;
     virtual bool uploadRgbTexture2D(RenderHandle& ioTexture, int width, int height, const std::vector<unsigned char>& pixels) = 0;
